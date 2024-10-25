@@ -308,8 +308,8 @@ The third piece of the summary output provides information regarding the fixed-e
   std.err<-se.ranef(model1)$Genotype
   v_BLUP<- mean(std.err)
 # Heritability/Reliability 
-  h2<- (1-((v_BLUP)^2/(Ve[1,4]*2)))*100
-  h2
+  h22<- (1-((v_BLUP)^2/(Ve[1,4]*2)))*100
+  h22
 ```
 
 
