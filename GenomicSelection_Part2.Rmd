@@ -1,0 +1,217 @@
+---
+title: Analysis Workflow Genomic Prediction/Selection
+
+  ![](logo.png){width=20%}
+
+author: 
+  - Waseem Hussain, Senior Scientist IRRI^[IRRI,Rice Breeding Innovations, waseem.hussain@irri.org]
+  
+date: "`r Sys.Date()`" 
+  
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: haddock
+---
+
+<style type="text/css">
+
+body 
+{
+   font-size: 18px;
+} 
+code.r{
+  font-size: 14px;
+} 
+pre {
+  font-size: 18px
+}
+
+body, td {
+   font-size: 18px;
+   text-align: justify;
+}
+
+h1.title 
+{/* Header 1 */
+  font-size: 40px;
+  font-family:  "Times New Roman", Times, serif;
+  color: black;
+   background-color:white;
+  text-transform: Capitalize;
+} 
+h1 { /* Header 1 */
+  font-size: 30px;
+  font-family: "Times New Roman", Times, serif;
+  color: black;
+  background-color:#FFF0F5;
+  text-transform: none;
+} 
+h2 { /* Header 2 */
+  font-size: 25px;
+  font-family: "Times New Roman", Times, serif;
+  color: darkblue;
+  text-transform: none;
+} 
+h3 { /* Header 3 */
+  font-size: 22px;
+  font-family: "Times New Roman", Times, serif;
+  color: DarkRed;
+  text-transform: none;
+} 
+h4 { /* Header 4 */
+  font-size: 18px;
+  font-family: "Times New Roman", Times, serif;
+  color: Darkred;
+  text-transform: none;
+} 
+
+</style>
+
+```{r knitr_init, echo=FALSE, cache=FALSE}
+library(knitr)
+## Global options
+options(max.print="100")
+opts_chunk$set(echo=TRUE,
+               cache=TRUE,
+               prompt=TRUE,
+               collapse=TRUE,
+               comment=NA,
+               strip.white=TRUE,
+               message=FALSE,
+               warning=FALSE,
+               width=65,
+               tidy.opts=list(width.cutoff=65, tidy=TRUE))
+```
+
+```{r setup, include=FALSE, echo=FALSE}
+  require("knitr")
+  opts_knit$set(root.dir = "~/Documents/Research/Workshops/South_Dakota/GS_Examples")
+```
+
+# Load the Libraries
+
+```{r, warning = FALSE, message = FALSE}
+# Load the Required Libraries
+  rm(list=ls()) # Remove previous work
+  library(rrBLUP)
+  library(BGLR)
+  library(AGHmatrix)
+  library(ggplot2)
+  library(DT)
+  #library(cvTools)
+  library(dplyr)
+  library(lme4)
+  library(arm)
+  library(sommer)
+```
+
+***
+#  Genomic Seelction using Stage 1 dataset
+***
+
+**Location**: IRRI, Philippines
+
+**Study**: ***OYT, Stress and Non-Stress***
+
+**Contact Person**: ***Ma Teresa Sta Cruz***
+
+**Treatmental Design**: Alpha Lattice; 
+
+- 2 Replication, 618 entries and  4 checks.
+
+- **Checks**: IRRI 132, IR64, IR20, IRRI 163
+
+**Season**: Dry-season (DS).
+
+**Year**: 2021.
+
+***
+
+
+### The First step towards Genomic Predictions is to find an optimal Training Population Set
+
+1. R package TrainSel : Deniz Akdemir et. al. 2021
+
+TrainSel, provides flexible, efficient, and easy-to-use tools that can be used for the selection of training populations (STP).
+
+TrainSel uses a combination of Genetic Algorithm (GA) (Holland, 1992) and Simulated Annealing (SA) Algorithm (Haines, 1987) for solving combinatorial optimization problems. 
+
+Built-in-design Criterion, CDMin (Laloë (1993), Laloë and Phocas (2003), Rincent et al. (2012))
+
+Source: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8138169/pdf/fgene-12-655287.pdf
+
+***Alternative Packages which can be utilized for Training Set Preparation
+
+a. R Package TSDFGS, Deniz Akdemir et al. (2015), Ou and Liao (2019)
+
+In TSDFGS, we use R function optTrain, for optimal training set determination
+The function "optTrain" use a genetic algorithm to evaluate an optimal solution using one of the criteria (r-score (Ou J.H., Liao C.T. (2018) ), PEV-score (Akdemir D. et al. (2015) ), CD-score(Laloe D. (1993) )). 
+
+Basis: Genetic Algorithm (GA) is an simple exchange algorithm (change an individual every iteration), most suited for combinatorial optimization problem (Akdemir et al. 2015). GA can usually converge to an optimum within a reasonable computing time.  
+
+Source: https://cran.r-project.org/web/packages/TSDFGS/TSDFGS.pdf
+
+
+b. R package STPGA, Deniz Akdemir et. al. 2017 
+
+Expands as Selection of Training Populations by Genetic Algorithm.
+In STPGA we use R function GenAlgForSubsetSelection.
+
+Source: https://cran.r-project.org/web/packages/STPGA/STPGA.pdf
+
+
+## Now we will create a Training set using "TrainSel" R package
+
+## Optimize the Control Settings using TrainSel
+
+
+npop” which is the size of the genetic algorithm population, “nelite” which is the number of elite solutions selected in each iteration, “niterations” which is the maximum number of iterations for the genetic algorithm, “miniterbefstop” is the minimum number of iterations of “no change” before the algorithm is deemed converged, “tolconv” which is the tolerance for determining “no change” in the criteria values, “niterSANN” which is the number of iterations for the SA algorithm, “stepSANN” which controls the speed of cooling of the SA algorithm. For larger problems increasing “niterations” and “niterbefstop” parameters will usually suffice. Optimum value of "niterations" parameter= 5000 and the "minitbefstop" parameter =200 worked optimum.
+
+
+
+```{r, message=FALSE, echo=FALSE}
+###########################################
+# Generating a training population
+###########################################
+
+#Objective: Training set optimization consists of choosing a set of training individuals that will better predict un-phenotyped germplasm in a TS
+
+library(TrainSel)
+
+
+control=TrainSelControl()
+
+# When using a mixed model based CDmin statistic we need to prepare the data using the ’MakeTrainSel-Data function
+# We will use marker data to prepare data for mixed model based criterion.
+
+TSData<-MakeTrainSelData(M=geno)
+str (TSData)
+
+## We use ’TrainSel’ function to select an Unordered Sample ("UOS") of size 10 from the first 100 individuals in the dataset
+#as a default it picks, corresponding to the first 100 rows of data. The default settings do not need to be modified for small to medium-sized optimization problems. We select settypes as "OS"power if to perform multi-objective optimization, else we will use "UOS".
+
+out1<-TrainSel(Data=TSData, Candidates=list(1:100), setsizes=c(10),settypes="UOS", control=
+                 control)
+
+##To check for convergence, we will plot the objective function values over the iterations
+
+plot(out1$maxvec)
+
+# Subset the best complete genotypic data of the best picked 10 genotypes from the genotype file.
+
+TS <- out1$BestSol_int
+
+# Subset the best complete genotypic data of the best picked 10 genotypes from the genotype file
+
+TS.M <- geno[TS,]
+
+# Transpose the matrix
+
+  transp.M <- t(TS.M)
+  
+  
+```
+

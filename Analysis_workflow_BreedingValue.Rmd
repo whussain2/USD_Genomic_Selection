@@ -1,0 +1,349 @@
+---
+title: Analysis Workflow Genomic Prediction/Selection
+
+  ![](logo.png){width=20%}
+
+author: 
+  - Waseem Hussain, Senior Scientist IRRI^[IRRI,Rice Breeding Innovations, waseem.hussain@irri.org]
+  
+date: "`r Sys.Date()`" 
+  
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: haddock
+---
+
+<style type="text/css">
+
+body 
+{
+   font-size: 18px;
+} 
+code.r{
+  font-size: 14px;
+} 
+pre {
+  font-size: 18px
+}
+
+body, td {
+   font-size: 18px;
+   text-align: justify;
+}
+
+h1.title 
+{/* Header 1 */
+  font-size: 40px;
+  font-family:  "Times New Roman", Times, serif;
+  color: black;
+   background-color:white;
+  text-transform: Capitalize;
+} 
+h1 { /* Header 1 */
+  font-size: 30px;
+  font-family: "Times New Roman", Times, serif;
+  color: black;
+  background-color:#FFF0F5;
+  text-transform: none;
+} 
+h2 { /* Header 2 */
+  font-size: 25px;
+  font-family: "Times New Roman", Times, serif;
+  color: darkblue;
+  text-transform: none;
+} 
+h3 { /* Header 3 */
+  font-size: 22px;
+  font-family: "Times New Roman", Times, serif;
+  color: DarkRed;
+  text-transform: none;
+} 
+h4 { /* Header 4 */
+  font-size: 18px;
+  font-family: "Times New Roman", Times, serif;
+  color: Darkred;
+  text-transform: none;
+} 
+
+</style>
+
+```{r knitr_init, echo=FALSE, cache=FALSE}
+library(knitr)
+## Global options
+options(max.print="100")
+opts_chunk$set(echo=TRUE,
+               cache=TRUE,
+               prompt=TRUE,
+               collapse=TRUE,
+               comment=NA,
+               strip.white=TRUE,
+               message=FALSE,
+               warning=FALSE,
+               width=65,
+               tidy.opts=list(width.cutoff=65, tidy=TRUE))
+```
+
+```{r setup, include=FALSE, echo=FALSE}
+  require("knitr")
+  opts_knit$set(root.dir = "~/Documents/GitHub/USD_Genomic_Selection")
+```
+
+
+# Load the Libraries
+
+```{r, warning = FALSE, message = FALSE}
+# Load the Required Libraries
+  rm(list=ls()) # Remove previous work
+  library(rrBLUP)
+  library(BGLR)
+  library(AGHmatrix)
+  library(ggplot2)
+  library(DT)
+  #library(cvTools)
+  library(dplyr)
+  library(lme4)
+  library(arm)
+  library(sommer)
+```
+
+
+# Two Step Genomic Selection
+
+* Here will show example of **Two-step Genomic selection**, in which non-genetic effects and genetic effects are modeled seperately. More details on on single-step and two-step GS can be found here: [Resource 1](https://doi.org/10.1002/csc2.20253), [Resource 2](https://doi.org/10.1371/journal.pone.0201181), [Resource 3](https://doi.org/10.1534/g3.118.200038), [Resource 4](https://www.nature.com/articles/s41437-020-0321-0).
+
+
+* Here in this section we will provide an example how to fit the model when we have marker data available.     We will show how to extract the breeding values.
+
+* We will use data from the trials evaluated under high temperature across multiple countries
+
+* We will use the the BLUEs as response variable which has been already estimated per trial.
+
+***
+# Read SNP Marker Data
+***
+
+* Genotype/marker data is GBS data set with 844 genotypes and 396511 SNP Markers
+
+```{r}
+  geno<-readRDS("./Data_sets/GBS_data.rds")
+  dim(geno)
+```
+
+
+## Read the Phenotype Data
+
+* We will read phenotype data and match with genotype data
+
+* We have phenotype data on only 252 genotypes (Training Set only)
+
+* We will latter predict the performance of rest of the 592
+
+* We will use BLUEs as response variable (Remember got it from first Step-Wise Analaysis)
+
+```{r}
+  pheno<-read.csv(file="./Data_sets/BLUEs.all.csv", header=TRUE, row.names = 1)
+  pheno<-na.omit(pheno)
+  # Subset the data and remove IRRI data
+  pheno$ExperimentalSite<-as.factor(pheno$ExperimentalSite)
+  pheno2<-pheno[! pheno$ExperimentalSite %in% c('IRRICT', 'IRRIHNT'), ]
+  pheno2<-droplevels.data.frame(pheno2)
+  table(pheno2$ExperimentalSite)
+  Ids<-unique( pheno2$IRDNC_ID)
+  length(Ids)
+  # Now subet the genotype Data based on IDs
+  geno<-geno[row.names(geno)%in%Ids,]
+  dim(geno)
+```
+
+
+# Now Build the gBLUP model
+
+## Build the G matrix
+
+
+* Here we will construct the **Genomic Relationship Matrix (GRM)** using marker data. The GRM will be based on **VanRanden (2008)**. 
+
+* The steps used to create this GRM is:
+    - Create a center of marker data (X matrix)
+    - Create a Cross Product $(XX)$
+    - Divide the $(XX)$ by number of markers
+    
+  \[
+  GRM= XX^t/m
+  \]
+  
+* More on relationship matrix can be found here [Source 1](https://www.sciencedirect.com/science/article/pii/S0022030209707933), [Source2](https://naldc.nal.usda.gov/download/27183/PDF)
+
+* We will use the AGHmatrix package to build G matrix.
+ 
+```{r} 
+  GM<- Gmatrix(SNPmatrix=geno, missingValue=NA, 
+                            maf=0.05, method="VanRaden")
+  dim(GM)
+```
+
+
+## Heat Map of the GM matrix
+
+```{r}
+  heatmap(GM)
+```
+
+# Fit the Model
+
+* The baseline **GBLUP** model is given as: 
+
+$$
+y = X\beta+Zu + e
+$$
+where $y$ is the vector of BLUEs or response variable; $\beta$ represents the fixed effects; $X$ is the design matrix of fixed effects, $u$ is the vector of random marker effects, where $u \sim N(0,I\sigma^2_u)$ and $\sigma^2_u$ is the marker variance; and $e$ is residuals, where $e \sim N(0,I\sigma^2_{\epsilon})$. $Z$ is the design matrix of $m$ markers.
+
+* Note we will use the  **G Matrix** rather than Marker design matrix to fit the gBLUP model.
+
+* Note in GBLUP model $u$ represent the *Genomic Estimated Breeding Values** not marker effects. It is called **BLUP of Breeding Value**
+
+* We will use  *SOMMER* R package (Click Here)[https://cran.r-project.org/web/packages/sommer/index.html]
+
+
+```{r}
+  library(sommer)
+# Write the model
+  g_blup<- mmer(BLUEs~1,
+              random=~vsr(IRDNC_ID,Gu=GM)+ExperimentalSite,
+              rcov=~units, nIters=3,data=pheno2,verbose = FALSE) 
+  summary(g_blup)
+  #BLUPs<-g_blup$U$`u:IRDNC_ID`$BLUEs
+ # g_blup$Beta[1,3]
+  estimated<-data.frame(GEBVs= g_blup$U$`u:IRDNC_ID`$BLUEs)
+  estimated$GEBVs<-estimated$GEBVs+ g_blup$Beta[1,3]
+```
+
+
+# Example of Genomic Selection in Program
+
+* Here we will use the same data and extract the breeding Values.
+
+* We will also predict the Breeding Values (GEBVs) of 592 un-tested genotypes
+
+## Read the marker data
+
+```{r}
+# Read the same marker data
+  geno<-readRDS("./Data_sets/GBS_data.rds")
+  dim(geno)
+  
+```
+
+
+## Build the G matrix (Big matrix of 844 x 844)
+
+```{}
+  GM<- Gmatrix(SNPmatrix=geno, missingValue=NA, 
+                            maf=0.05, method="VanRaden")
+  dim(GM)
+```
+
+## Build the gBLUP Model and Predict
+
+```{r}
+  gs.model1<- mmer(BLUEs~1,
+              random=~vsr(IRDNC_ID,Gu=GM)+ExperimentalSite,
+              rcov=~units, nIters=3,data=pheno2,verbose = FALSE) 
+  summary(gs.model1)
+  #gs.model1$U$`u:IRDNC_ID`$BLUEs
+  #gs.model1$Beta[1,3]
+  estimated<-data.frame(GEBVs= gs.model1$U$`u:IRDNC_ID`$BLUEs)
+  estimated$GEBVs<-estimated$GEBVs+ gs.model1$Beta[1,3]
+```
+
+
+## Visualize the GEBVs
+
+```{r}
+ggplot(data=estimated, aes(GEBVs))+
+          #geom_density(alpha = 0.5)+
+          geom_histogram(fill="pink", color="black")+
+          #theme_few()+ #use white theme
+          labs(title="",x="Value", y = "Count")
+
+```
+
+## Extract the Additional Components
+
+### Variance Componnets
+
+```{r}
+#var comps
+sm <- summary( gs.model1)$varcomp
+sm
+```
+
+### Heritability
+
+```{r}
+vg <- sm[grepl('IRDNC_ID', row.names(sm)), 1]
+ve <- sm[grepl('units', row.names(sm)), 1]
+h2 <- vpredict(gs.model1, h2 ~ V1 / (V1 + V2))$Estimate
+h2
+```
+
+### Reliability (Prediction Accuracy)
+
+```{r}
+# Get prediction Error Variance 
+pev <- diag(gs.model1$PevU$`u:IRDNC_ID`$BLUEs)
+# Get Reliability
+reliability<- data.frame(r2=1 - pev / vg)
+head(reliability)
+```
+
+*** 
+# Additional Literature
+***
+
+- [Screening experimental designs ](https://www.frontiersin.org/articles/10.3389/fphys.2012.00156/full)
+
+- [Analysis and Handling of G × E in a Practical Breeding Program](https://acsess.onlinelibrary.wiley.com/doi/abs/10.2135/cropsci2015.06.0336)
+
+- [A stage‐wise approach for the analysis of multi‐environment trials](https://onlinelibrary.wiley.com/doi/abs/10.1002/bimj.201100219)
+
+- [Analysis of series of variety trials with perennial crops](https://onlinelibrary.wiley.com/doi/abs/10.1111/gfs.12054)
+
+- [A tutorial on the statistical analysis of factorial experiments with qualitative and quantitative treatment factor levels](https://onlinelibrary.wiley.com/doi/full/10.1111/jac.12267)
+
+- [Experimental design matters for statistical analysis: how to handle blocking](https://onlinelibrary.wiley.com/doi/abs/10.1002/ps.4773)
+
+- [Random effects structure for confirmatory hypothesis testing: Keep it maximal](https://www.sciencedirect.com/science/article/abs/pii/S0749596X12001180)
+
+- [Generalized linear mixed models: a practical guide for ecology and evolution](https://www.sciencedirect.com/science/article/abs/pii/S0169534709000196)
+
+- [Mixed Models Offer No Freedom from Degrees of Freedom](https://www.sciencedirect.com/science/article/abs/pii/S0169534719303465)
+
+- [Perils and pitfalls of mixed-effects regression models in biology](https://peerj.com/articles/9522/)
+
+- [A brief introduction to mixed effects modelling and multi-model inference in ecology](https://peerj.com/articles/4794/)
+
+- [Modeling Spatially Correlated and Heteroscedastic Errors in Ethiopian Maize Trials](https://acsess.onlinelibrary.wiley.com/doi/abs/10.2135/cropsci2017.11.0693)
+
+- [More, Larger, Simpler: How Comparable Are On‐Farm and On‐Station Trials for Cultivar Evaluation](https://acsess.onlinelibrary.wiley.com/doi/abs/10.2135/cropsci2017.09.0555)
+
+- [Rethinking the Analysis of Non‐Normal Data in Plant and Soil Science](https://acsess.onlinelibrary.wiley.com/doi/10.2134/agronj2013.0342)
+
+- [The Design and Analysis of Long‐Term Rotation Experiments](https://acsess.onlinelibrary.wiley.com/doi/10.2134/agronj2012.0411)
+
+- [Analysis of Combined Experiments Revisited](https://acsess.onlinelibrary.wiley.com/doi/10.2134/agronj13.0485)
+
+- [Fundamentals of Experimental Design: Guidelines for Designing Successful Experiments](https://acsess.onlinelibrary.wiley.com/doi/full/10.2134/agronj2013.0114)
+
+
+***
+*Note: For questions specific to data analysiss shown here contact waseem.hussain@irri.org*
+
+***
+
+<span style="color: blue;font-size: 14pt;font-family: fantansy">*If your experiment needs a statistician, you need a better experiment - Ernest Rutherford*</span>
+
+
